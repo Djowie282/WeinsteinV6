@@ -279,10 +279,9 @@ else:
     </div>""", unsafe_allow_html=True)
 
     if is_admin(user):
-        with nc5:
-            if st.button("🔄 Force cache refresh", use_container_width=True):
-                st.cache_data.clear()
-                st.success("Cache cleared — reloading…")
-                st.rerun()
+        if st.button("🔄 Force cache refresh"):
+            st.cache_data.clear()
+            st.success("Cache cleared — reloading…")
+            st.rerun()
 
     st.markdown(f"<p class='subtext'>Weinstein V6 · {datetime.now().strftime('%A %d %B %Y')} · Data cached 7 days</p>", unsafe_allow_html=True)
