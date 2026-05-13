@@ -266,11 +266,11 @@ else:
 
     # ── Quick Navigation ───────────────────────────────────────
     st.markdown("### 🧭 Quick Navigation")
-    nc1,nc2,nc3,nc4,nc5 = st.columns(5)
-    nc1.page_link("pages/1_Screener.py",  label="🏦 Screener",   use_container_width=True)
-    nc2.page_link("pages/2_All_Stocks.py",label="📋 All Stocks",  use_container_width=True)
-    nc3.page_link("pages/3_Dashboard.py", label="🔒 Dashboard",   use_container_width=True)
-    nc4.page_link("pages/4_Crypto.py",    label="₿ Crypto",       use_container_width=True)
+    nc1,nc2,nc3,nc4 = st.columns(4)
+    with nc1: st.page_link("pages/1_Screener.py",   label="🏦 Screener")
+    with nc2: st.page_link("pages/2_All_Stocks.py", label="📋 All Stocks")
+    with nc3: st.page_link("pages/3_Dashboard.py",  label="🔒 Dashboard")
+    with nc4: st.page_link("pages/4_Crypto.py",     label="₿ Crypto")
 
     if is_admin(user):
         with nc5:
