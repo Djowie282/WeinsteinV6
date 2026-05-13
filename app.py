@@ -1,12 +1,5 @@
-"""
-app.py — Weinstein Screener V6
-================================
-Dashboard-first home page:
-- Weekly market regime overview
-- Top signals of the week
-- RRG snapshot
-- Quick links to all pages
-"""
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
 import pandas as pd
