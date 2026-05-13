@@ -266,11 +266,17 @@ else:
 
     # ── Quick Navigation ───────────────────────────────────────
     st.markdown("### 🧭 Quick Navigation")
-    nc1,nc2,nc3,nc4 = st.columns(4)
-    with nc1: st.page_link("pages/1_Screener.py",   label="🏦 Screener")
-    with nc2: st.page_link("pages/2_All_Stocks.py", label="📋 All Stocks")
-    with nc3: st.page_link("pages/3_Dashboard.py",  label="🔒 Dashboard")
-    with nc4: st.page_link("pages/4_Crypto.py",     label="₿ Crypto")
+    st.markdown("""
+    <div style='display:flex;gap:12px;flex-wrap:wrap'>
+      <a href='/1_Screener' target='_self' style='text-decoration:none'>
+        <div class='wcard' style='padding:12px 20px;font-weight:600'>🏦 Screener</div></a>
+      <a href='/2_All_Stocks' target='_self' style='text-decoration:none'>
+        <div class='wcard' style='padding:12px 20px;font-weight:600'>📋 All Stocks</div></a>
+      <a href='/3_Dashboard' target='_self' style='text-decoration:none'>
+        <div class='wcard' style='padding:12px 20px;font-weight:600'>🔒 Dashboard</div></a>
+      <a href='/4_Crypto' target='_self' style='text-decoration:none'>
+        <div class='wcard' style='padding:12px 20px;font-weight:600'>₿ Crypto</div></a>
+    </div>""", unsafe_allow_html=True)
 
     if is_admin(user):
         with nc5:
