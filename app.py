@@ -15,10 +15,10 @@ import plotly.graph_objects as go
 import json
 from datetime import datetime
 
-from utils.theme import page_config, inject_css, get_colors, signal_pill
+from utils.theme import page_config, inject_css, get_colors
 from utils.screener import (
     get_spx_data, scan_tickers, fmt, rs_tag, sig_icon, signal_card_html,
-    SECTORS, SECTOR_STOCKS
+    SECTORS, SECTOR_STOCKS, export_tv_lines
 )
 from utils.db import (
     check_login, create_user, validate_invite, use_invite,
