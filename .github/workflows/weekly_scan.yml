@@ -1,0 +1,37 @@
+name: Weekly Weinstein Scan
+
+on:
+  schedule:
+    # Every Saturday at 07:00 UTC (after US market closes Friday)
+    - cron: '0 7 * * 6'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install yfinance pandas numpy supabase requests
+
+      - name: Run weekly scan
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python scripts/run_weekly_scan.py
+
+      - name: Notify completion
+        if: always()
+        run: |
+          echo "Scan completed at $(date)"
