@@ -301,6 +301,100 @@ else:
 
 st.markdown("---")
 
+# ── Stock Search ─────────────────────────────────────────────
+with st.expander("🔎 Analyze a stock", expanded=False):
+    sc1, sc2 = st.columns([4,1])
+    with sc1:
+        search_q = st.text_input("", placeholder="e.g. NVDA, ARM, TSLA…",
+                                  label_visibility="collapsed", key="stock_search")
+    with sc2:
+        do_search = st.button("Analyze", use_container_width=True, key="stock_search_btn")
+
+    if search_q and do_search:
+        q = search_q.strip().upper()
+        with st.spinner(f"Analyzing {q}…"):
+            spx_close_s = pd.read_json(StringIO(spx_close_json), typ="series")
+            df_s = fetch_weekly(q)
+
+        if df_s.empty:
+            st.error(f"Could not find data for {q}.")
+        else:
+            from utils.screener import evaluate
+            r = evaluate(df_s, spx_close_s)
+            stage = r["stage"]
+
+            # Metrics
+            a1,a2,a3,a4 = st.columns(4)
+            a1.metric("Stage",     stage)
+            a2.metric("Score",     f"{r['score']}/5")
+            a3.metric("RS vs SPX", fmt(r["rs"],"",1))
+            a4.metric("%>50w SMA", fmt(r["pct_above"],"%",1))
+            b1,b2,b3,b4 = st.columns(4)
+            b1.metric("Price",   fmt(r["price"]))
+            b2.metric("50w SMA", fmt(r["sma50w"]))
+            b3.metric("Stop",    fmt(r["stop"]))
+            b4.metric("Risk",    fmt(r["risk"],"%",1))
+
+            st.markdown("---")
+            st.markdown("#### ✅ Weinstein Checklist")
+
+            def chk(passed, label, detail):
+                icon  = "✅" if passed else "❌"
+                color = C["GREEN"] if passed else C["RED"]
+                return (f'<div style="display:flex;gap:10px;padding:8px 14px;margin:4px 0;'
+                        f'background:{C["CARD"]};border-radius:8px;border:1px solid {C["BORDER"]}">' 
+                        f'<span style="font-size:1.1rem">{icon}</span>'
+                        f'<div><strong style="color:{color}">{label}</strong><br>'
+                        f'<span style="color:{C["SUB"]};font-size:0.8rem">{detail}</span></div></div>')
+
+            pct = r["pct_above"] or 0
+            st.markdown(chk(r["above_sma"],"Price above 50w SMA",
+                f"Price {fmt(r['price'])} is {fmt(pct,'%',1)} {'above' if pct>=0 else 'below'} the 50w SMA ({fmt(r['sma50w'])})"),unsafe_allow_html=True)
+            st.markdown(chk(r["sma_rising"],"50w SMA is rising",
+                "SMA slope positive — uptrend confirmed." if r["sma_rising"] else "SMA flat or declining — warning."),unsafe_allow_html=True)
+            st.markdown(chk(r["rs_up"],"RS vs SPX positive",
+                f"RS: {fmt(r['rs'],'',1)} — {rs_tag(r['rs'])}. {'Outperforming market.' if r['rs_up'] else 'Underperforming — Weinstein avoids these.'}"),unsafe_allow_html=True)
+            st.markdown(chk(r["near_high"],"Near 52-week high (within 15%)",
+                "Within breakout zone." if r["near_high"] else "More than 15% below 52w high."),unsafe_allow_html=True)
+            st.markdown(chk(r["not_extended"],"Not overextended (<30% above SMA)",
+                f"{fmt(pct,'%',1)} above SMA. {'Ideal entry zone.' if 0<pct<15 else 'Extended — wait for pullback.' if pct>=15 else 'Below SMA.'}"),unsafe_allow_html=True)
+            vol = r["vol"]
+            st.markdown(chk(r["vol_ok"],"Breakout on above-average volume (≥1.5x)",
+                f"Vol ratio: {fmt(vol,'x',1)}. {'Strong buying.' if vol and vol>=2 else 'Confirmed.' if vol and vol>=1.5 else 'Below avg — low conviction.'}"),unsafe_allow_html=True)
+            bw = r["base_w"]
+            st.markdown(chk(bw>=15,"Base ≥15 weeks",
+                f"Base: {bw}w ({r['base_q']}). {'Very long — Weinstein ideal.' if bw>=80 else 'Long.' if bw>=40 else 'Medium.' if bw>=15 else 'Too short.'}"),unsafe_allow_html=True)
+
+            st.markdown("---")
+            st.markdown("#### 🧠 Verdict")
+            if "Stage 2" in stage and r["score"]>=4:
+                if r.get("premium"):
+                    vc=C["GREEN"]; v=f"**🟢 PREMIUM** — {q} is in a textbook Stage 2 breakout with a {bw}w base. Stop at {fmt(r['stop'])} ({fmt(r['risk'],'%',1)} risk)."
+                elif r.get("early_sig"):
+                    vc=C["GREEN"]; v=f"**🟢 EARLY** — {q} crossed above 50w SMA {r['cross']}w ago with {fmt(vol,'x',1)} volume. Entry window open. Stop at {fmt(r['stop'])}."
+                else:
+                    vc=C["BLUE"]; v=f"**🔵 STAGE 2 — LATE** — {q} is in Stage 2 but move is underway ({fmt(pct,'%',1)} above SMA). Wait for pullback toward {fmt(r['sma50w'])}."
+            elif "Stage 1" in stage:
+                vc=C["BLUE"]; v=f"**🔵 STAGE 1** — {q} building a {bw}w base. Not actionable yet. Alert at {fmt(r['sma50w'])} + volume."
+            elif "Stage 3" in stage:
+                vc=C["YELLOW"]; v=f"**🟡 STAGE 3** — {q} topping. SMA flattening. Tighten stops, do not buy."
+            else:
+                vc=C["RED"]; v=f"**🔴 STAGE 4** — {q} in downtrend. Never buy Stage 4."
+
+            st.markdown(f'<div style="background:{C["CARD"]};border-left:4px solid {vc};border:1px solid {vc}33;border-radius:10px;padding:16px 20px;line-height:1.7">{v}</div>',unsafe_allow_html=True)
+
+            # Mini chart
+            with st.expander("📊 Chart", expanded=True):
+                fig_s = make_chart(q)
+                if fig_s: st.plotly_chart(fig_s, use_container_width=True)
+
+            if is_logged_in:
+                if st.button(f"➕ Add {q} to watchlist", key=f"wl_search_{q}"):
+                    add_to_watchlist(user, q, tag="analyzed")
+                    st.toast(f"✓ {q} added to watchlist", icon="📌")
+
+st.markdown("---")
+
 tab_sectors, tab_industries, tab_signals, tab_s1, tab_daily = st.tabs([
     "🏦 Sectors & RRG", "🔍 Industries", "🚨 Signals", "👁 Stage 1 Watchlist", "📅 Daily"])
 
