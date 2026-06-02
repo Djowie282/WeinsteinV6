@@ -41,7 +41,7 @@ def compute_rrg_inline(tickers, years=2):
             if len(df2) < 20: continue
             rs_raw = (df2.iloc[:,0] / df2.iloc[:,1]) * 100
             rs_ema = rs_raw.ewm(span=10, adjust=False).mean()
-            norm   = rs_ema.iloc[-52:].mean()
+            norm   = rs_ema.iloc[-26:].mean()
             rs_r   = (rs_ema / norm) * 100 if norm > 0 else rs_ema
             rs_m   = (rs_r / rs_r.shift(4) * 100).ewm(span=10, adjust=False).mean()
             x = round(float(rs_r.iloc[-1]), 2)
@@ -53,7 +53,10 @@ def compute_rrg_inline(tickers, years=2):
             else:                q="Lagging"
             dx = x - float(rs_r.iloc[-2]) if len(rs_r)>=2 else 0
             dy = y - float(rs_m.iloc[-2]) if len(rs_m)>=2 else 0
+            trail_x2=[round(float(v),2) for v in rs_r.iloc[-3:-1].values if not pd.isna(v)]
+            trail_y2=[round(float(v),2) for v in rs_m.iloc[-3:-1].values if not pd.isna(v)]
             results.append({"ticker":tk,"x":x,"y":y,"quadrant":q,
+                "trail_x":trail_x2,"trail_y":trail_y2,
                 "dx":round(dx,2),"dy":round(dy,2),
                 "rotating_in": q in ("Improving","Leading") and dy>0})
         except: continue
@@ -109,7 +112,7 @@ def plot_rrg(rrg_data: list, title: str = "", height: int = 420, key: str = "rrg
         x=xs, y=ys, mode="markers+text",
         text=[r["ticker"] for r in rrg_data],
         textposition="top center",
-        textfont=dict(size=9, color=C["TEXT"]),
+        textfont=dict(size=8, color=C["SUB"]),
         marker=dict(
             color=[qc[r["quadrant"]] for r in rrg_data],
             size=14, line=dict(width=1, color=C["BORDER"])
