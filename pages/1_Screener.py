@@ -15,13 +15,50 @@ from datetime import datetime, timedelta
 
 from utils.theme import page_config, inject_css, get_colors
 from utils.screener import (
-    compute_rrg_data,
     get_spx_data, scan_tickers, scan_batch, fetch_weekly,
     scan_tickers_daily, get_spx_daily, fetch_daily_data, evaluate_daily,
     SECTORS, SECTOR_STOCKS, fmt, rs_tag, sig_icon, signal_card_html,
     export_tv, export_tv_lines, fetch_nyse_tickers
 )
 from utils.db import add_to_watchlist
+
+def compute_rrg_inline(tickers, years=2):
+    end = datetime.today(); start = end - timedelta(weeks=years*52+20)
+    all_tks = list(set(tickers + ["SPY"]))
+    try:
+        raw = yf.download(all_tks, start=start, end=end, interval="1wk",
+                          auto_adjust=True, progress=False, threads=False)["Close"]
+        if isinstance(raw, pd.Series): raw = raw.to_frame(all_tks[0])
+        raw = raw.ffill().dropna(how="all")
+    except: return []
+    if "SPY" not in raw.columns or len(raw) < 20: return []
+    spy = raw["SPY"].copy()
+    results = []
+    for tk in tickers:
+        if tk not in raw.columns: continue
+        try:
+            df2 = pd.concat([raw[tk], spy], axis=1).dropna()
+            if len(df2) < 20: continue
+            rs_raw = (df2.iloc[:,0] / df2.iloc[:,1]) * 100
+            rs_ema = rs_raw.ewm(span=10, adjust=False).mean()
+            norm   = rs_ema.iloc[-52:].mean()
+            rs_r   = (rs_ema / norm) * 100 if norm > 0 else rs_ema
+            rs_m   = (rs_r / rs_r.shift(4) * 100).ewm(span=10, adjust=False).mean()
+            x = round(float(rs_r.iloc[-1]), 2)
+            y = round(float(rs_m.iloc[-1]), 2)
+            if pd.isna(x) or pd.isna(y): continue
+            if x>100 and y>100: q="Leading"
+            elif x>100:          q="Weakening"
+            elif y>100:          q="Improving"
+            else:                q="Lagging"
+            dx = x - float(rs_r.iloc[-2]) if len(rs_r)>=2 else 0
+            dy = y - float(rs_m.iloc[-2]) if len(rs_m)>=2 else 0
+            results.append({"ticker":tk,"x":x,"y":y,"quadrant":q,
+                "dx":round(dx,2),"dy":round(dy,2),
+                "rotating_in": q in ("Improving","Leading") and dy>0})
+        except: continue
+    return results
+
 
 def plot_rrg(rrg_data: list, title: str = "", height: int = 420, key: str = "rrg") -> None:
     """Render a proper JdK RRG with trails and rotation indicators."""
@@ -503,7 +540,7 @@ with tab_sectors:
 
     # JdK RRG
     with st.spinner('Computing JdK RRG (RS-Ratio / RS-Momentum)…'):
-        rrg_data = compute_rrg_data(json.dumps(list(SECTORS.keys())))
+        rrg_data = compute_rrg_inline(list(SECTORS.keys()))
 
     if rrg_data:
         improving = [r for r in rrg_data if r['quadrant']=='Improving' and r['rotating_in']]
