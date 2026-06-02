@@ -11,7 +11,7 @@ from datetime import datetime
 from utils.theme import page_config, inject_css, get_colors
 from utils.screener import (
     get_spx_data, scan_tickers, fmt, rs_tag, sig_icon, signal_card_html,
-    SECTORS, SECTOR_STOCKS, export_tv_lines
+    SECTORS, SECTOR_STOCKS, export_tv_lines, compute_rrg_data
 )
 from utils.db import (
     check_login, create_user, validate_invite, use_invite,
@@ -235,48 +235,40 @@ else:
                 q = "Leading" if x>0 and y>0 else "Weakening" if x>0 else "Improving" if y>0 else "Lagging"
                 rrg_colors.append(qc[q])
 
-            if rrg_x:
-                mx = max(abs(v) for v in rrg_x+[1])*1.3
-                my = max(abs(v) for v in rrg_y+[1])*1.3
-                fig = go.Figure()
-                for xr,yr,col in [(mx,my,"rgba(74,222,128,0.07)"),(mx,-my,"rgba(251,191,36,0.07)"),
-                                  (-mx,-my,"rgba(248,113,113,0.07)"),(-mx,my,"rgba(96,165,250,0.07)")]:
-                    fig.add_shape(type="rect",x0=0 if xr>0 else xr,y0=0 if yr>0 else yr,
-                        x1=xr if xr>0 else 0,y1=yr if yr>0 else 0,fillcolor=col,line_width=0)
-                for lb,xp,yp in [("LEADING",0.7,0.85),("WEAKENING",0.7,-0.85),
-                                  ("IMPROVING",-0.7,0.85),("LAGGING",-0.7,-0.85)]:
-                    fig.add_annotation(x=mx*xp,y=my*yp,text=lb,showarrow=False,
-                        font=dict(size=8,color=C["BORDER"]),opacity=0.6)
-                fig.add_hline(y=0,line_color=C["BORDER"],line_width=1)
-                fig.add_vline(x=0,line_color=C["BORDER"],line_width=1)
-                fig.add_trace(go.Scatter(x=rrg_x,y=rrg_y,mode="markers+text",
-                    text=rrg_labels,textposition="top center",
-                    textfont=dict(size=9,color=C["TEXT"]),
-                    marker=dict(color=rrg_colors,size=12,line=dict(width=1,color=C["BORDER"])),
-                    hovertemplate="<b>%{text}</b><br>RS: %{x:.1f}<br>Mom: %{y:.1f}<extra></extra>"))
-                fig.update_layout(height=380,margin=dict(l=0,r=0,t=10,b=0),
-                    paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
-                    font=dict(color=C["TEXT"],family="Inter"),
-                    xaxis=dict(title="RS Score",showgrid=True,gridcolor=C["BORDER"],color=C["SUB"],zeroline=False),
-                    yaxis=dict(title="Momentum",showgrid=True,gridcolor=C["BORDER"],color=C["SUB"],zeroline=False),
-                    showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("---")
+            with st.spinner("Computing RRG…"):
+                rrg_d = compute_rrg_data(json.dumps(list(SECTORS.keys())))
+        if rrg_d:
+            improving = [r for r in rrg_d if r["quadrant"]=="Improving" and r["rotating_in"]]
+            if improving:
+                names = [SECTORS.get(r["ticker"],r["ticker"]) for r in improving]
+                st.markdown(f'<div class="wcard-info" style="font-size:0.82rem">🔄 <strong>Rotating in:</strong> {", ".join(names)}</div>', unsafe_allow_html=True)
+            # Simple RRG plot for dashboard
+            qc2={"Leading":"rgba(74,222,128,0.9)","Weakening":"rgba(251,191,36,0.9)",
+                 "Lagging":"rgba(248,113,113,0.9)","Improving":"rgba(96,165,250,0.9)"}
+            xs2=[r["x"] for r in rrg_d]; ys2=[r["y"] for r in rrg_d]
+            pad2=max(max(abs(x-100) for x in xs2+[101]),max(abs(y-100) for y in ys2+[101]))*1.3
+            fig2=go.Figure()
+            fig2.add_hline(y=100,line_color=C["BORDER"],line_width=1)
+            fig2.add_vline(x=100,line_color=C["BORDER"],line_width=1)
+            for lb,xp,yp in [("LEADING",0.7,0.8),("WEAKENING",0.7,-0.8),("IMPROVING",-0.7,0.8),("LAGGING",-0.7,-0.8)]:
+                fig2.add_annotation(x=100+pad2*xp,y=100+pad2*yp,text=lb,showarrow=False,font=dict(size=8,color=C["BORDER"]),opacity=0.5)
+            fig2.add_trace(go.Scatter(x=xs2,y=ys2,mode="markers+text",
+                text=[SECTORS.get(r["ticker"],r["ticker"])[:10] for r in rrg_d],
+                textposition="top center",textfont=dict(size=8,color=C["TEXT"]),
+                marker=dict(color=[qc2[r["quadrant"]] for r in rrg_d],size=12,line=dict(width=1,color=C["BORDER"])),
+                hovertemplate="<b>%{text}</b><br>RS-Ratio: %{x:.1f}<br>RS-Mom: %{y:.1f}<extra></extra>"))
+            fig2.update_layout(height=380,margin=dict(l=0,r=0,t=10,b=0),
+                paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color=C["TEXT"],family="Inter"),
+                xaxis=dict(title="RS-Ratio",range=[100-pad2,100+pad2],showgrid=True,gridcolor=C["BORDER"],color=C["SUB"],zeroline=False),
+                yaxis=dict(title="RS-Momentum",range=[100-pad2,100+pad2],showgrid=True,gridcolor=C["BORDER"],color=C["SUB"],zeroline=False),
+                showlegend=False)
+            st.plotly_chart(fig2, use_container_width=True)
+            st.markdown("---")
 
     # ── Quick Navigation ───────────────────────────────────────
     st.markdown("### 🧭 Quick Navigation")
-    st.markdown("""
-    <div style='display:flex;gap:12px;flex-wrap:wrap'>
-      <a href='/1_Screener' target='_self' style='text-decoration:none'>
-        <div class='wcard' style='padding:12px 20px;font-weight:600'>🏦 Screener</div></a>
-      <a href='/2_All_Stocks' target='_self' style='text-decoration:none'>
-        <div class='wcard' style='padding:12px 20px;font-weight:600'>📋 All Stocks</div></a>
-      <a href='/3_Dashboard' target='_self' style='text-decoration:none'>
-        <div class='wcard' style='padding:12px 20px;font-weight:600'>🔒 Dashboard</div></a>
-      <a href='/4_Crypto' target='_self' style='text-decoration:none'>
-        <div class='wcard' style='padding:12px 20px;font-weight:600'>₿ Crypto</div></a>
-    </div>""", unsafe_allow_html=True)
+    st.markdown(f"<p style='color:{C["SUB"]}'>Use the <strong>sidebar navigation</strong> on the left to access all pages.</p>", unsafe_allow_html=True)
 
     if is_admin(user):
         if st.button("🔄 Force cache refresh"):

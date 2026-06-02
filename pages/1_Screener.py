@@ -15,12 +15,106 @@ from datetime import datetime, timedelta
 
 from utils.theme import page_config, inject_css, get_colors
 from utils.screener import (
+    compute_rrg_data,
     get_spx_data, scan_tickers, scan_batch, fetch_weekly,
     scan_tickers_daily, get_spx_daily, fetch_daily_data, evaluate_daily,
     SECTORS, SECTOR_STOCKS, fmt, rs_tag, sig_icon, signal_card_html,
     export_tv, export_tv_lines, fetch_nyse_tickers
 )
 from utils.db import add_to_watchlist
+
+def plot_rrg(rrg_data: list, title: str = "", height: int = 420, key: str = "rrg") -> None:
+    """Render a proper JdK RRG with trails and rotation indicators."""
+    if not rrg_data:
+        st.info("Not enough data to build RRG.")
+        return
+
+    C = get_colors()
+    qc = {"Leading":"rgba(74,222,128,0.9)","Weakening":"rgba(251,191,36,0.9)",
+          "Lagging":"rgba(248,113,113,0.9)","Improving":"rgba(96,165,250,0.9)"}
+    qbg= {"Leading":"rgba(74,222,128,0.06)","Weakening":"rgba(251,191,36,0.06)",
+          "Lagging":"rgba(248,113,113,0.06)","Improving":"rgba(96,165,250,0.06)"}
+
+    xs = [r["x"] for r in rrg_data]; ys = [r["y"] for r in rrg_data]
+    cx = 100; cy = 100  # JdK centre is always 100,100
+    pad = max(max(abs(x-100) for x in xs+[101]), max(abs(y-100) for y in ys+[101])) * 1.3
+
+    fig = go.Figure()
+
+    # Quadrant backgrounds
+    for xr,yr,q in [(cx+pad,cy+pad,"Leading"),(cx+pad,cy,"Weakening"),
+                    (cx,cy,"Improving"),(cx,cy-pad,"Lagging")]:
+        x0 = cx if xr > cx else cx-pad
+        y0 = cy if yr > cy else cy-pad
+        fig.add_shape(type="rect", x0=x0, y0=y0, x1=xr if xr>cx else cx, y1=yr if yr>cy else cy,
+                      fillcolor=qbg[q], line_width=0)
+
+    # Centre lines
+    fig.add_hline(y=cy, line_color=C["BORDER"], line_width=1.5)
+    fig.add_vline(x=cx, line_color=C["BORDER"], line_width=1.5)
+
+    # Quadrant labels
+    for lb,xp,yp in [("LEADING",0.75,0.8),("WEAKENING",0.75,-0.8),
+                     ("IMPROVING",-0.75,0.8),("LAGGING",-0.75,-0.8)]:
+        fig.add_annotation(x=cx+pad*xp, y=cy+pad*yp, text=lb, showarrow=False,
+            font=dict(size=9, color=C["BORDER"]), opacity=0.5)
+
+    # Trails (last 4 weeks path)
+    for r in rrg_data:
+        if r.get("trail_x") and len(r["trail_x"]) >= 2:
+            tx = r["trail_x"] + [r["x"]]; ty = r["trail_y"] + [r["y"]]
+            fig.add_trace(go.Scatter(x=tx, y=ty, mode="lines",
+                line=dict(color=qc[r["quadrant"]], width=1, dash="dot"),
+                showlegend=False, hoverinfo="skip"))
+
+    # Dots
+    fig.add_trace(go.Scatter(
+        x=xs, y=ys, mode="markers+text",
+        text=[r["ticker"] for r in rrg_data],
+        textposition="top center",
+        textfont=dict(size=9, color=C["TEXT"]),
+        marker=dict(
+            color=[qc[r["quadrant"]] for r in rrg_data],
+            size=14, line=dict(width=1, color=C["BORDER"])
+        ),
+        customdata=[[r["quadrant"], r["dx"], r["dy"]] for r in rrg_data],
+        hovertemplate=(
+            "<b>%{text}</b><br>"
+            "RS-Ratio: %{x:.1f}<br>"
+            "RS-Momentum: %{y:.1f}<br>"
+            "Quadrant: %{customdata[0]}<br>"
+            "Δ this week: RS %{customdata[1]:+.2f} / Mom %{customdata[2]:+.2f}"
+            "<extra></extra>"
+        ),
+    ))
+
+    # Velocity arrows for rotating sectors
+    for r in rrg_data:
+        if abs(r.get("dx",0)) > 0.1 or abs(r.get("dy",0)) > 0.1:
+            fig.add_annotation(x=r["x"], y=r["y"],
+                ax=r["x"]-r["dx"]*3, ay=r["y"]-r["dy"]*3,
+                xref="x", yref="y", axref="x", ayref="y",
+                showarrow=True, arrowhead=2, arrowsize=1.2,
+                arrowwidth=1.5,
+                arrowcolor=qc[r["quadrant"]])
+
+    fig.update_layout(
+        height=height, margin=dict(l=0,r=0,t=24,b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=C["TEXT"], family="Inter"),
+        xaxis=dict(title="RS-Ratio (>100 = outperforming SPY)",
+                   range=[cx-pad, cx+pad],
+                   showgrid=True, gridcolor=C["BORDER"], color=C["SUB"], zeroline=False),
+        yaxis=dict(title="RS-Momentum (>100 = accelerating)",
+                   range=[cy-pad, cy+pad],
+                   showgrid=True, gridcolor=C["BORDER"], color=C["SUB"], zeroline=False),
+        showlegend=False,
+    )
+
+    event = st.plotly_chart(fig, use_container_width=True,
+                             on_select="rerun", key=f"rrg_{key}")
+    return event
+
 
 page_config("Screener · Weinstein V6")
 inject_css()
@@ -407,48 +501,25 @@ with tab_sectors:
     st.markdown("#### Relative Rotation Graph")
     st.markdown(f"<p class='subtext'>Leading (top-right) · Weakening (bottom-right) · Improving (top-left) · Lagging (bottom-left)</p>",unsafe_allow_html=True)
 
-    rrg_x,rrg_y,rrg_labels,rrg_colors=[],[],[],[]
-    qc={"Leading":C["GREEN"],"Weakening":C["YELLOW"],"Lagging":C["RED"],"Improving":C["BLUE"]}
-    for _,sec in sec_df.iterrows():
-        rs=sec.get("rs")
-        if rs is None or (isinstance(rs,float) and np.isnan(rs)): continue
-        x=float(rs); y=float(sec.get("pct_above") or 0)*(1 if sec.get("sma_rising") else -1)
-        rrg_x.append(x); rrg_y.append(y); rrg_labels.append(sec.get("name",sec["ticker"]))
-        q="Leading" if x>0 and y>0 else "Weakening" if x>0 else "Improving" if y>0 else "Lagging"
-        rrg_colors.append(qc[q])
+    # JdK RRG
+    with st.spinner('Computing JdK RRG (RS-Ratio / RS-Momentum)…'):
+        rrg_data = compute_rrg_data(json.dumps(list(SECTORS.keys())))
 
-    if rrg_x:
-        mx=max(abs(v) for v in rrg_x+[1])*1.3; my=max(abs(v) for v in rrg_y+[1])*1.3
-        fig_rrg=go.Figure()
-        for xr,yr,col in [(mx,my,"rgba(74,222,128,0.07)"),(mx,-my,"rgba(251,191,36,0.07)"),
-                          (-mx,-my,"rgba(248,113,113,0.07)"),(-mx,my,"rgba(96,165,250,0.07)")]:
-            fig_rrg.add_shape(type="rect",x0=0 if xr>0 else xr,y0=0 if yr>0 else yr,
-                x1=xr if xr>0 else 0,y1=yr if yr>0 else 0,fillcolor=col,line_width=0)
-        for lb,xp,yp in [("LEADING",0.8,0.9),("WEAKENING",0.8,-0.9),("IMPROVING",-0.8,0.9),("LAGGING",-0.8,-0.9)]:
-            fig_rrg.add_annotation(x=mx*xp,y=my*yp,text=lb,showarrow=False,
-                font=dict(size=9,color=C["BORDER"]),opacity=0.6)
-        fig_rrg.add_hline(y=0,line_color=C["BORDER"],line_width=1)
-        fig_rrg.add_vline(x=0,line_color=C["BORDER"],line_width=1)
-        fig_rrg.add_trace(go.Scatter(x=rrg_x,y=rrg_y,mode="markers+text",
-            text=rrg_labels,textposition="top center",textfont=dict(size=10,color=C["TEXT"]),
-            marker=dict(color=rrg_colors,size=14,line=dict(width=1,color=C["BORDER"])),
-            hovertemplate="<b>%{text}</b><br>RS: %{x:.1f}<br>Momentum: %{y:.1f}<extra></extra>"))
-        fig_rrg.update_layout(height=380,margin=dict(l=0,r=0,t=10,b=0),
-            paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color=C["TEXT"],family="Inter"),
-            xaxis=dict(title="RS Score",showgrid=True,gridcolor=C["BORDER"],color=C["SUB"],zeroline=False),
-            yaxis=dict(title="Momentum",showgrid=True,gridcolor=C["BORDER"],color=C["SUB"],zeroline=False),
-            showlegend=False)
-        rrg_event = st.plotly_chart(fig_rrg, width="stretch",
-                                       on_select="rerun", key="rrg_sector_chart")
-        # Handle click → auto-select sector in drill-down
-        if rrg_event and hasattr(rrg_event, "selection") and rrg_event.selection.get("points"):
+    if rrg_data:
+        improving = [r for r in rrg_data if r['quadrant']=='Improving' and r['rotating_in']]
+        if improving:
+            names = [SECTORS.get(r['ticker'],r['ticker']) for r in improving]
+            st.markdown(f'<div class="wcard-info">🔄 <strong>Early rotation signal:</strong> {", ".join(names)} moving Lagging → Improving. Watch for entry.</div>', unsafe_allow_html=True)
+        rrg_event = plot_rrg(
+            [{**r, "ticker": SECTORS.get(r["ticker"],r["ticker"])} for r in rrg_data],
+            key="sector_rrg", height=420)
+        if rrg_event and hasattr(rrg_event,"selection") and rrg_event.selection.get("points"):
             clicked = rrg_event.selection["points"][0].get("text","")
             if clicked and clicked in list(SECTORS.values()):
                 st.session_state["sec_drill"] = clicked
-                st.toast(f"📍 {clicked} selected — see drill-down below", icon="🏦")
-
-    st.markdown("---")
+                st.toast(f"📍 {clicked} selected", icon="🏦")
+        st.markdown("<p class='subtext'>RS-Ratio >100 = outperforms SPY · RS-Momentum >100 = accelerating · Dotted trail = last 4 weeks · Arrows = weekly direction</p>", unsafe_allow_html=True)
+        st.markdown("---")
     st.markdown("#### Sector Ranking")
     sec_rows=[]
     for _,r in sec_df.iterrows():

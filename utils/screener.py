@@ -88,6 +88,58 @@ def fetch_nyse_tickers() -> list:
     return sorted(set(tickers))
 
 
+
+@st.cache_data(ttl=7*24*3600, show_spinner=False)
+def compute_rrg_data(tickers_json: str, years: int = 2) -> list:
+    """
+    Proper JdK RS-Ratio / RS-Momentum for RRG.
+    RS-Ratio   = 10w EMA of (ticker/SPY), normalized to 100
+    RS-Momentum= 10w EMA of (RS-Ratio / RS-Ratio[4w ago] * 100)
+    > 100 = bullish/accelerating. < 100 = bearish/decelerating.
+    """
+    import json as _json
+    tickers = _json.loads(tickers_json)
+    end = datetime.today(); start = end - timedelta(weeks=years*52+20)
+    all_tks = list(set(tickers + ["SPY"]))
+    try:
+        raw = yf.download(all_tks, start=start, end=end, interval="1wk",
+                          auto_adjust=True, progress=False, threads=False)["Close"]
+        if isinstance(raw, pd.Series): raw = raw.to_frame(all_tks[0])
+        raw = raw.ffill().dropna(how="all")
+    except Exception: return []
+    if "SPY" not in raw.columns or len(raw) < 20: return []
+    spy = raw["SPY"].copy()
+    results = []
+    for tk in tickers:
+        if tk not in raw.columns: continue
+        try:
+            df_pair = pd.concat([raw[tk], spy], axis=1).dropna()
+            if len(df_pair) < 20: continue
+            p = df_pair.iloc[:,0]; s = df_pair.iloc[:,1]
+            rs_raw    = (p / s) * 100
+            rs_ema    = rs_raw.ewm(span=10, adjust=False).mean()
+            rs_norm   = rs_ema.iloc[-52:].mean()
+            rs_ratio  = (rs_ema / rs_norm) * 100 if rs_norm > 0 else rs_ema
+            rs_mom_r  = (rs_ratio / rs_ratio.shift(4)) * 100
+            rs_mom    = rs_mom_r.ewm(span=10, adjust=False).mean()
+            x = round(float(rs_ratio.iloc[-1]), 2)
+            y = round(float(rs_mom.iloc[-1]), 2)
+            if pd.isna(x) or pd.isna(y): continue
+            if x > 100 and y > 100:   q = "Leading"
+            elif x > 100 and y <= 100: q = "Weakening"
+            elif x <= 100 and y > 100: q = "Improving"
+            else:                       q = "Lagging"
+            dx = x - float(rs_ratio.iloc[-2]) if len(rs_ratio) >= 2 else 0
+            dy = y - float(rs_mom.iloc[-2]) if len(rs_mom) >= 2 else 0
+            trail_x = [round(float(v),2) for v in rs_ratio.iloc[-5:-1].values if not pd.isna(v)]
+            trail_y = [round(float(v),2) for v in rs_mom.iloc[-5:-1].values if not pd.isna(v)]
+            results.append({"ticker": tk, "x": x, "y": y, "quadrant": q,
+                "trail_x": trail_x, "trail_y": trail_y,
+                "dx": round(dx,2), "dy": round(dy,2),
+                "rotating_in": q in ("Improving","Leading") and dy > 0})
+        except Exception: continue
+    return sorted(results, key=lambda r: (r["quadrant"]=="Leading", r["quadrant"]=="Improving", r["x"]), reverse=True)
+
 @st.cache_data(ttl=7*24*3600, show_spinner=False)
 def get_spx_data() -> tuple:
     """Return (spx_eval, sec_df, spx_close_json). Checks Supabase cache first."""
