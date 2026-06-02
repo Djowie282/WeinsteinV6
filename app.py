@@ -271,9 +271,32 @@ else:
     st.markdown(f"<p style='color:{C["SUB"]}'>Use the <strong>sidebar navigation</strong> on the left to access all pages.</p>", unsafe_allow_html=True)
 
     if is_admin(user):
-        if st.button("🔄 Force cache refresh"):
-            st.cache_data.clear()
-            st.success("Cache cleared — reloading…")
-            st.rerun()
+        with st.expander("⚙️ Admin tools"):
+            ac1, ac2 = st.columns(2)
+            with ac1:
+                if st.button("🔄 Clear cache", use_container_width=True):
+                    st.cache_data.clear()
+                    st.success("Cache cleared")
+                    st.rerun()
+            with ac2:
+                if st.button("📡 Trigger scan now", use_container_width=True):
+                    with st.spinner("Running scan (1-2 min)…"):
+                        from utils.screener import scan_tickers, SECTOR_STOCKS, get_spx_data
+                        from utils.db import save_cached_scan
+                        spx_e, sec_d, spx_j = get_spx_data()
+                        if sec_d is not None:
+                            save_cached_scan("sectors", sec_d.to_dict("records"))
+                            all_sigs = []
+                            for sec_tk, stocks in SECTOR_STOCKS.items():
+                                df = scan_tickers(json.dumps(stocks), spx_j)
+                                if df.empty: continue
+                                for _,r in df[df["score"]>=3].iterrows():
+                                    rd = r.to_dict(); rd["sector"] = SECTORS.get(sec_tk,"")
+                                    all_sigs.append(rd)
+                            save_cached_scan("signals", all_sigs)
+                            st.success(f"✓ Cached {len(sec_d)} sectors + {len(all_sigs)} signals")
+                            st.rerun()
+                        else:
+                            st.error("Could not scan — Yahoo rate-limited")
 
     st.markdown(f"<p class='subtext'>Weinstein V6 · {datetime.now().strftime('%A %d %B %Y')} · Data cached 7 days</p>", unsafe_allow_html=True)

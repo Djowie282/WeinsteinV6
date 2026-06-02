@@ -11,6 +11,7 @@ from utils.theme import page_config, inject_css, get_colors
 from utils.screener import get_spx_data, scan_tickers, fmt, rs_tag, sig_icon
 from utils.db import (
     get_portfolio, upsert_position, sell_shares, delete_position,
+    get_alerts, add_alert, remove_alert,
     get_watchlist, add_to_watchlist, remove_from_watchlist,
     gen_invite, list_invites, list_users, is_admin, validate_invite
 )
@@ -404,29 +405,109 @@ if s4:
             {fmt(r['pct_above'],'%',1)} vs SMA · RS {fmt(rs,'',1)} ({rs_tag(rs)}){note}
         </div>""", unsafe_allow_html=True)
 
-# ── Watchlist ─────────────────────────────────────────────────
+# ── Watchlist (enriched with Weinstein data + alerts) ─────────
 st.markdown("---")
-st.markdown("#### 👁 Watchlist")
-wl = get_watchlist(user)
+st.markdown("### 👁 Watchlist & Alerts")
 
-add_wl_col, _ = st.columns([2, 3])
-with add_wl_col:
-    with st.form("add_wl"):
-        wl_tk  = st.text_input("Add ticker to watchlist").upper().strip()
-        wl_tag = st.selectbox("Tag", ["watch","stage1","alert"])
-        wl_sub = st.form_submit_button("Add")
-        if wl_sub and wl_tk:
-            add_to_watchlist(user, wl_tk, wl_tag)
+wl = get_watchlist(user)
+alerts_list = get_alerts(user)
+alert_tickers = {a["ticker"] for a in alerts_list}
+
+# Quick add
+qa_c1, qa_c2, qa_c3 = st.columns([2, 1, 1])
+with qa_c1:
+    new_wl_tk = st.text_input("Add ticker", placeholder="e.g. NVDA, ARM…",
+                              label_visibility="collapsed", key="quick_add_wl")
+with qa_c2:
+    new_wl_tag = st.selectbox("Tag", ["watch","stage1","analyzed","signal"],
+                              label_visibility="collapsed", key="quick_add_tag")
+with qa_c3:
+    if st.button("➕ Add", use_container_width=True, key="quick_add_btn"):
+        if new_wl_tk.strip():
+            add_to_watchlist(user, new_wl_tk.strip().upper(), new_wl_tag)
             st.rerun()
 
 if wl:
-    wl_rows = []
-    for w in wl:
-        wl_rows.append({"Ticker": w["ticker"], "Tag": w.get("tag","watch"), "Notes": w.get("notes","")})
-    st.dataframe(pd.DataFrame(wl_rows), width="stretch", hide_index=True)
-    rm_tk = st.selectbox("Remove from watchlist", ["–"] + [w["ticker"] for w in wl])
-    if rm_tk != "–" and st.button("Remove"):
-        remove_from_watchlist(user, rm_tk)
-        st.rerun()
+    from utils.screener import scan_tickers, fmt, sig_icon
+    import json as _json
+
+    wl_tickers = [w["ticker"] for w in wl]
+    with st.spinner("Loading Weinstein data for watchlist…"):
+        wl_scan = scan_tickers(_json.dumps(wl_tickers), spx_close_json)
+
+    if not wl_scan.empty:
+        # Check for triggered alerts (Stage 1 → Stage 2 transitions)
+        triggered = []
+        for w in wl:
+            tk = w["ticker"]
+            match = wl_scan[wl_scan["ticker"] == tk]
+            if not match.empty:
+                r = match.iloc[0].to_dict()
+                if r.get("early_sig") or r.get("premium"):
+                    if w.get("tag") == "stage1" or tk in alert_tickers:
+                        triggered.append({"ticker": tk, "stage": r["stage"],
+                                          "early": r.get("early_sig"), "premium": r.get("premium")})
+
+        if triggered:
+            st.markdown("#### 🚨 Alert Triggers")
+            for t in triggered:
+                level = "🟢 PREMIUM" if t["premium"] else "🟡 EARLY"
+                st.markdown(f"<div class='wcard-premium'><strong>{level}</strong> — "
+                           f"<strong>{t['ticker']}</strong> just hit {t['stage']}! Check the Screener.</div>",
+                           unsafe_allow_html=True)
+            st.markdown("---")
+
+        # Build enriched table
+        st.markdown("#### Your Watchlist")
+        wl_rows = []
+        for w in wl:
+            tk = w["ticker"]
+            match = wl_scan[wl_scan["ticker"] == tk]
+            if not match.empty:
+                r = match.iloc[0].to_dict()
+                cross = f"{int(r['cross'])}w" if r.get("cross",-1)>=0 else "–"
+                wl_rows.append({
+                    "Tag":     w.get("tag","watch"),
+                    "Ticker":  tk,
+                    "Signal":  sig_icon(r),
+                    "Stage":   r["stage"],
+                    "Score":   f"{r['score']}/5",
+                    "RS":      fmt(r["rs"],"",1),
+                    "Price":   fmt(r["price"]),
+                    "%>SMA":   fmt(r["pct_above"],"%",1),
+                    "Base":    f"{r['base_w']}w",
+                    "Cross":   cross,
+                    "Alert":   "🔔" if tk in alert_tickers else "—",
+                })
+            else:
+                wl_rows.append({"Tag": w.get("tag","watch"), "Ticker": tk,
+                                "Signal": "", "Stage": "—", "Score": "—", "RS": "—",
+                                "Price": "—", "%>SMA": "—", "Base": "—", "Cross": "—",
+                                "Alert": "🔔" if tk in alert_tickers else "—"})
+
+        if wl_rows:
+            df_wl = pd.DataFrame(wl_rows)
+            st.dataframe(df_wl, width="stretch", hide_index=True, height=min(420, 50+len(df_wl)*36))
+
+    # Manage actions
+    mgmt1, mgmt2 = st.columns(2)
+    with mgmt1:
+        with st.expander("🔔 Manage alerts"):
+            st.caption("Get a flag in the watchlist when a ticker hits Stage 2 (early or premium signal).")
+            al_tk = st.selectbox("Toggle alert for", ["–"] + [w["ticker"] for w in wl], key="alert_pick")
+            if al_tk != "–":
+                if al_tk in alert_tickers:
+                    if st.button(f"🔕 Disable alert for {al_tk}", key="al_disable"):
+                        remove_alert(user, al_tk); st.rerun()
+                else:
+                    if st.button(f"🔔 Enable alert for {al_tk}", key="al_enable"):
+                        add_alert(user, al_tk, "sma_cross"); st.rerun()
+    with mgmt2:
+        with st.expander("🗑 Remove from watchlist"):
+            rm_tk = st.selectbox("Pick ticker to remove", ["–"] + [w["ticker"] for w in wl], key="rm_pick")
+            if rm_tk != "–" and st.button(f"Remove {rm_tk}", key="rm_btn"):
+                remove_from_watchlist(user, rm_tk)
+                if rm_tk in alert_tickers: remove_alert(user, rm_tk)
+                st.rerun()
 else:
-    st.caption("Your watchlist is empty.")
+    st.info("Your watchlist is empty. Add tickers via the Screener or use the search above.")
